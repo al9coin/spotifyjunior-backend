@@ -11,6 +11,9 @@ const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
 
+// 🔄 URL dynamique pour Railway
+const PORT = process.env.PORT || 3000;
+
 app.get('/login', (req, res) => {
   const scope = 'user-read-private user-read-email';
   const redirectUrl =
@@ -54,6 +57,6 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log('✅ Serveur démarré sur http://localhost:3000');
+app.listen(PORT, () => {
+  console.log(`✅ Serveur démarré sur http://localhost:${PORT}`);
 });
