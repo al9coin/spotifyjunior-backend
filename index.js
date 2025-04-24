@@ -1,3 +1,4 @@
+// index.js
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -6,21 +7,17 @@ require('dotenv').config();
 const app = express();
 app.use(cors());
 
-// ✅ Route de vie pour Render
-app.get('/', (req, res) => {
-  res.send('✅ SpotifyJunior backend est en ligne');
-});
-
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
+const appRedirect = "spotifyjunior://callback"; // <- Lien personnalisé pour l'app mobile
 
 const PORT = process.env.PORT || 3000;
 
 app.get('/login', (req, res) => {
   const scope = 'user-read-private user-read-email';
-  const redirectUrl =
-    'https://accounts.spotify.com/authorize?' +
+
+  const redirectUrl = 'https://accounts.spotify.com/authorize?' +
     new URLSearchParams({
       response_type: 'code',
       client_id: clientId,
@@ -53,13 +50,16 @@ app.get('/callback', async (req, res) => {
     );
 
     const accessToken = response.data.access_token;
-    res.json({ access_token: accessToken });
+
+    // ✅ Rediriger vers ton app avec le token
+    res.redirect(`${appRedirect}#access_token=${accessToken}`);
+
   } catch (error) {
-    console.error('❌ Erreur callback:', error.response?.data || error.message);
+    console.error(error.response?.data || error.message);
     res.status(500).send('Erreur lors de l’échange de code');
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Serveur SpotifyJunior prêt sur PORT ${PORT}`);
+  console.log(`✅ Serveur démarré sur http://localhost:${PORT}`);
 });
