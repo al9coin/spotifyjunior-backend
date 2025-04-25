@@ -10,12 +10,20 @@ app.use(cors());
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
-const appRedirect = "spotifyjunior://callback"; // <- Lien personnalisé pour l'app mobile
+const appRedirect = "spotifyjunior://callback"; // <- URI personnalisée pour l'app mobile
 
 const PORT = process.env.PORT || 3000;
 
 app.get('/login', (req, res) => {
-  const scope = 'user-read-private user-read-email playlist-read-private user-library-read user-top-read';
+  // ✅ Tous les scopes nécessaires pour l’app Spotify Junior
+  const scope = [
+    'user-read-private',
+    'user-read-email',
+    'playlist-read-private',
+    'user-library-read',
+    'user-top-read',
+    'user-read-recently-played'
+  ].join(' ');
 
   const redirectUrl = 'https://accounts.spotify.com/authorize?' +
     new URLSearchParams({
@@ -51,7 +59,7 @@ app.get('/callback', async (req, res) => {
 
     const accessToken = response.data.access_token;
 
-    // ✅ Rediriger vers ton app avec le token
+    // ✅ Redirige vers l’app mobile avec le token
     res.redirect(`${appRedirect}#access_token=${accessToken}`);
 
   } catch (error) {
