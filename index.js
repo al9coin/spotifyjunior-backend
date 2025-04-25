@@ -15,7 +15,7 @@ const appRedirect = "spotifyjunior://callback"; // <- Lien personnalisé pour l'
 const PORT = process.env.PORT || 3000;
 
 app.get('/login', (req, res) => {
-  const scope = 'user-read-private user-read-email';
+  const scope = 'user-read-private user-read-email playlist-read-private user-library-read user-top-read';
 
   const redirectUrl = 'https://accounts.spotify.com/authorize?' +
     new URLSearchParams({
