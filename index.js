@@ -78,24 +78,32 @@ app.get('/callback', async (req, res) => {
     const accessToken = response.data.access_token;
 
     // 👉 Envoi page de redirection
-    res.send(`
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-          <title>Redirection vers l'application...</title>
-          <style>
-            body { font-family: sans-serif; text-align: center; margin-top: 50px; }
-          </style>
-        </head>
-        <body>
-          <h2>Connexion réussie 🎶</h2>
-          <p>Redirection en cours...</p>
-          <script>
-            window.location.replace("${appRedirect}#access_token=${accessToken}");
-          </script>
-        </body>
-      </html>
-    `);
+   res.send(`
+  <html>
+    <head>
+      <meta charset="UTF-8" />
+      <title>Connexion Spotify réussie</title>
+      <style>
+        body { font-family: sans-serif; text-align: center; margin-top: 100px; }
+        a.button {
+          background-color: #1DB954;
+          color: white;
+          padding: 15px 25px;
+          text-decoration: none;
+          font-size: 18px;
+          border-radius: 5px;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>✅ Connexion réussie à Spotify !</h1>
+      <p>Appuyez sur le bouton ci-dessous pour revenir dans Spotify Junior.</p>
+      <br/>
+      <a class="button" href="${appRedirect}#access_token=${accessToken}">Retourner dans l'application</a>
+    </body>
+  </html>
+`);
+
 
   } catch (error) {
     console.error(error.response?.data || error.message);
