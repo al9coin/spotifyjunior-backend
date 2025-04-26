@@ -2,7 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-require('dotenv').config();
+require('dotenv').config();  
 
 const app = express();
 app.use(cors());
@@ -22,7 +22,11 @@ app.get('/login', (req, res) => {
     'playlist-read-private',
     'user-library-read',
     'user-top-read',
-    'user-read-recently-played'
+    'user-read-recently-played',
+    'app-remote-control',
+    'streaming',
+    'user-read-playback-state',
+    'user-modify-playback-state'
   ].join(' ');
 
   const redirectUrl = 'https://accounts.spotify.com/authorize?' +
@@ -64,7 +68,7 @@ app.get('/callback', async (req, res) => {
 
   } catch (error) {
     console.error(error.response?.data || error.message);
-    res.status(500).send('Erreur lors de l’échange de code');
+    res.status(500).send('Erreur lors de l\'échange de code');
   }
 });
 
