@@ -2,29 +2,20 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const cookieParser = require('cookie-parser');
-const { generateCodeVerifier, generateCodeChallenge } = require('./pkce'); // <-- ajout
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(cookieParser()); // <-- ajout
 
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
-const redirectUri = process.env.REDIRECT_URI; // https://spotifyjunior-backend.onrender.com/callback
-const appRedirect = "spotifyjunior://callback";
+const redirectUri = process.env.REDIRECT_URI; // ex: https://spotifyjunior-backend.onrender.com/callback
+const appRedirect = "spotifyjunior://callback"; // URI personnalisée pour l'app mobile
 
 const PORT = process.env.PORT || 3000;
 
-// 👉 Route pour démarrer le login Spotify avec PKCE
+// 👉 Route pour démarrer l'auth
 app.get('/login', (req, res) => {
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
-
-  // On stocke temporairement le codeVerifier en cookie sécurisé
-  res.cookie('spotify_code_verifier', codeVerifier, { maxAge: 300000, httpOnly: true, secure: true });
-
   const scope = [
     'user-read-private',
     'user-read-email',
@@ -45,19 +36,18 @@ app.get('/login', (req, res) => {
       scope: scope,
       redirect_uri: redirectUri,
       code_challenge_method: 'S256',
-      code_challenge: codeChallenge,
+      code_challenge: 'Zq00E4Ad-0xQqjsU2aN8nkJJLUEqGcGN9jqHVoD7m10' // (valeur générée fixe ici pour test, mieux dynamique plus tard)
     });
 
   res.redirect(redirectUrl.toString());
 });
 
-// 👉 Route de callback après login Spotify avec PKCE
+// 👉 Route de callback après l'auth
 app.get('/callback', async (req, res) => {
   const code = req.query.code || null;
-  const codeVerifier = req.cookies.spotify_code_verifier || null;
 
-  if (!code || !codeVerifier) {
-    return res.status(400).send('Missing code or code_verifier.');
+  if (!code) {
+    return res.status(400).send('Missing code');
   }
 
   try {
@@ -68,26 +58,46 @@ app.get('/callback', async (req, res) => {
         code: code,
         redirect_uri: redirectUri,
         client_id: clientId,
-        code_verifier: codeVerifier,
+        // Pas besoin d'envoyer code_verifier ici car simplifié pour test
+        client_secret: clientSecret
       }),
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
       }
     );
 
     const accessToken = response.data.access_token;
 
-    // ✅ Redirige proprement vers l'app mobile
-    res.redirect(`${appRedirect}#access_token=${accessToken}`);
+    // 👉 Redirige avec une page HTML + JavaScript puissante
+    res.send(`
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+          <title>Redirection vers l'application...</title>
+          <style>
+            body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+          </style>
+        </head>
+        <body>
+          <h2>Connexion réussie 🎶</h2>
+          <p>Redirection en cours...</p>
+          <script>
+            // Redirige immédiatement vers l'app mobile
+            window.location.replace("${appRedirect}#access_token=${accessToken}");
+          </script>
+        </body>
+      </html>
+    `);
 
   } catch (error) {
     console.error(error.response?.data || error.message);
-    res.status(500).send('Erreur lors de l\'échange de code.');
+    res.status(500).send('Erreur lors de l\'échange du code avec Spotify');
   }
 });
 
+// ✅ Serveur démarré
 app.listen(PORT, () => {
   console.log(`✅ Serveur Spotify Junior démarré sur port ${PORT}`);
 });
