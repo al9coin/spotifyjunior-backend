@@ -9,13 +9,13 @@ app.use(cors());
 
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
-const redirectUri = process.env.REDIRECT_URI;
-const appRedirect = "spotifyjunior://callback"; // <- URI personnalisée pour l'app mobile
+const redirectUri = process.env.REDIRECT_URI; // https://spotifyjunior-backend.onrender.com/callback
+const appRedirect = "spotifyjunior://callback"; // URI personnalisée pour l'app mobile
 
 const PORT = process.env.PORT || 3000;
 
+// 👉 Route pour démarrer le login Spotify
 app.get('/login', (req, res) => {
-  // ✅ Tous les scopes nécessaires pour l’app Spotify Junior
   const scope = [
     'user-read-private',
     'user-read-email',
@@ -40,8 +40,13 @@ app.get('/login', (req, res) => {
   res.redirect(redirectUrl.toString());
 });
 
+// 👉 Route de callback après login Spotify
 app.get('/callback', async (req, res) => {
   const code = req.query.code || null;
+
+  if (!code) {
+    return res.status(400).send('Missing code');
+  }
 
   try {
     const response = await axios.post(
@@ -63,8 +68,21 @@ app.get('/callback', async (req, res) => {
 
     const accessToken = response.data.access_token;
 
-    // ✅ Redirige vers l’app mobile avec le token
-    res.redirect(`${appRedirect}#access_token=${accessToken}`);
+    // ✅ Redirige avec une page HTML + JavaScript pour WebView
+    res.send(`
+      <html>
+        <head>
+          <title>Connexion réussie</title>
+          <meta charset="UTF-8" />
+        </head>
+        <body>
+          <script>
+            window.location.href = "${appRedirect}#access_token=${accessToken}";
+          </script>
+          <p>Connexion réussie ! Vous pouvez fermer cette page.</p>
+        </body>
+      </html>
+    `);
 
   } catch (error) {
     console.error(error.response?.data || error.message);
@@ -73,5 +91,5 @@ app.get('/callback', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Serveur démarré sur http://localhost:${PORT}`);
+  console.log(`✅ Serveur Spotify Junior démarré sur port ${PORT}`);
 });
