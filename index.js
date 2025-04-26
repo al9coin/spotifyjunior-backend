@@ -3,18 +3,22 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 require('dotenv').config();
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
 
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
-const redirectUri = process.env.REDIRECT_URI; // ex: https://spotifyjunior-backend.onrender.com/callback
+const redirectUri = process.env.REDIRECT_URI; // https://spotifyjunior-backend.onrender.com/callback
 const appRedirect = "spotifyjunior://callback"; // URI personnalisée pour l'app mobile
 
 const PORT = process.env.PORT || 3000;
 
-// 👉 Route pour démarrer l'auth
+// Stockage temporaire code_verifier par session utilisateur simplifiée
+let currentCodeVerifier = null;
+
+// 👉 Route pour démarrer l'authentification
 app.get('/login', (req, res) => {
   const scope = [
     'user-read-private',
@@ -29,6 +33,10 @@ app.get('/login', (req, res) => {
     'user-modify-playback-state'
   ].join(' ');
 
+  // 🔥 Génération dynamique du code_verifier et code_challenge
+  currentCodeVerifier = generateRandomString(64);
+  const codeChallenge = generateCodeChallenge(currentCodeVerifier);
+
   const redirectUrl = 'https://accounts.spotify.com/authorize?' +
     new URLSearchParams({
       response_type: 'code',
@@ -36,13 +44,13 @@ app.get('/login', (req, res) => {
       scope: scope,
       redirect_uri: redirectUri,
       code_challenge_method: 'S256',
-      code_challenge: 'Zq00E4Ad-0xQqjsU2aN8nkJJLUEqGcGN9jqHVoD7m10' // (valeur générée fixe ici pour test, mieux dynamique plus tard)
+      code_challenge: codeChallenge
     });
 
   res.redirect(redirectUrl.toString());
 });
 
-// 👉 Route de callback après l'auth
+// 👉 Route de callback après Spotify
 app.get('/callback', async (req, res) => {
   const code = req.query.code || null;
 
@@ -58,8 +66,7 @@ app.get('/callback', async (req, res) => {
         code: code,
         redirect_uri: redirectUri,
         client_id: clientId,
-        // Pas besoin d'envoyer code_verifier ici car simplifié pour test
-        client_secret: clientSecret
+        code_verifier: currentCodeVerifier // 👈 Ici on renvoie le code_verifier utilisé
       }),
       {
         headers: {
@@ -70,7 +77,7 @@ app.get('/callback', async (req, res) => {
 
     const accessToken = response.data.access_token;
 
-    // 👉 Redirige avec une page HTML + JavaScript puissante
+    // 👉 Envoi page de redirection
     res.send(`
       <html>
         <head>
@@ -84,7 +91,6 @@ app.get('/callback', async (req, res) => {
           <h2>Connexion réussie 🎶</h2>
           <p>Redirection en cours...</p>
           <script>
-            // Redirige immédiatement vers l'app mobile
             window.location.replace("${appRedirect}#access_token=${accessToken}");
           </script>
         </body>
@@ -97,7 +103,24 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// ✅ Serveur démarré
+// ✅ Démarrage du serveur
 app.listen(PORT, () => {
   console.log(`✅ Serveur Spotify Junior démarré sur port ${PORT}`);
 });
+
+// 🔥 Fonctions PKCE
+function generateRandomString(length) {
+  return crypto.randomBytes(length).toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function generateCodeChallenge(codeVerifier) {
+  return crypto.createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
