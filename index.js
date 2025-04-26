@@ -2,20 +2,29 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-require('dotenv').config();  
+const cookieParser = require('cookie-parser');
+const { generateCodeVerifier, generateCodeChallenge } = require('./pkce'); // <-- ajout
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
+app.use(cookieParser()); // <-- ajout
 
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI; // https://spotifyjunior-backend.onrender.com/callback
-const appRedirect = "spotifyjunior://callback"; // URI personnalisée pour l'app mobile
+const appRedirect = "spotifyjunior://callback";
 
 const PORT = process.env.PORT || 3000;
 
-// 👉 Route pour démarrer le login Spotify
+// 👉 Route pour démarrer le login Spotify avec PKCE
 app.get('/login', (req, res) => {
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+
+  // On stocke temporairement le codeVerifier en cookie sécurisé
+  res.cookie('spotify_code_verifier', codeVerifier, { maxAge: 300000, httpOnly: true, secure: true });
+
   const scope = [
     'user-read-private',
     'user-read-email',
@@ -35,17 +44,20 @@ app.get('/login', (req, res) => {
       client_id: clientId,
       scope: scope,
       redirect_uri: redirectUri,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
     });
 
   res.redirect(redirectUrl.toString());
 });
 
-// 👉 Route de callback après login Spotify
+// 👉 Route de callback après login Spotify avec PKCE
 app.get('/callback', async (req, res) => {
   const code = req.query.code || null;
+  const codeVerifier = req.cookies.spotify_code_verifier || null;
 
-  if (!code) {
-    return res.status(400).send('Missing code');
+  if (!code || !codeVerifier) {
+    return res.status(400).send('Missing code or code_verifier.');
   }
 
   try {
@@ -55,38 +67,24 @@ app.get('/callback', async (req, res) => {
         grant_type: 'authorization_code',
         code: code,
         redirect_uri: redirectUri,
+        client_id: clientId,
+        code_verifier: codeVerifier,
       }),
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization:
-            'Basic ' +
-            Buffer.from(`${clientId}:${clientSecret}`).toString('base64'),
         },
       }
     );
 
     const accessToken = response.data.access_token;
 
-    // ✅ Redirige avec une page HTML + JavaScript pour WebView
-    res.send(`
-      <html>
-        <head>
-          <title>Connexion réussie</title>
-          <meta charset="UTF-8" />
-        </head>
-        <body>
-          <script>
-            window.location.href = "${appRedirect}#access_token=${accessToken}";
-          </script>
-          <p>Connexion réussie ! Vous pouvez fermer cette page.</p>
-        </body>
-      </html>
-    `);
+    // ✅ Redirige proprement vers l'app mobile
+    res.redirect(`${appRedirect}#access_token=${accessToken}`);
 
   } catch (error) {
     console.error(error.response?.data || error.message);
-    res.status(500).send('Erreur lors de l\'échange de code');
+    res.status(500).send('Erreur lors de l\'échange de code.');
   }
 });
 
