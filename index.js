@@ -78,30 +78,37 @@ app.get('/callback', async (req, res) => {
     const accessToken = response.data.access_token;
 
     // 👉 Envoi page de redirection
-   res.send(`
-  <html>
-    <head>
-      <meta charset="UTF-8" />
-      <title>Connexion Spotify réussie</title>
-      <style>
-        body { font-family: sans-serif; text-align: center; margin-top: 100px; }
-        a.button {
-          background-color: #1DB954;
-          color: white;
-          padding: 15px 25px;
-          text-decoration: none;
-          font-size: 18px;
-          border-radius: 5px;
-        }
-      </style>
-    </head>
-    <body>
-      <h1>✅ Connexion réussie à Spotify !</h1>
-      <p>Appuyez sur le bouton ci-dessous pour revenir dans Spotify Junior.</p>
-      <br/>
-      <a class="button" href="${appRedirect}#access_token=${accessToken}">Retourner dans l'application</a>
-    </body>
-  </html>
+ res.send(`
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Connexion Spotify réussie</title>
+    <style>
+      body { font-family: sans-serif; text-align: center; margin-top: 100px; }
+      a.button {
+        background-color: #1DB954;
+        color: white;
+        padding: 15px 25px;
+        text-decoration: none;
+        font-size: 18px;
+        border-radius: 5px;
+        display: inline-block;
+        margin-top: 30px;
+      }
+    </style>
+    <script>
+      // Redirige automatiquement vers l'application mobile
+      window.onload = function() {
+        window.location.href = "${appRedirect}#access_token=${accessToken}";
+      };
+    </script>
+  </head>
+  <body>
+    <h1>✅ Connexion réussie à Spotify !</h1>
+    <p>Si vous n'êtes pas redirigé automatiquement, appuyez sur le bouton ci-dessous.</p>
+    <a class="button" href="${appRedirect}#access_token=${accessToken}">Retourner dans l'application</a>
+  </body>
+</html>
 `);
 
 
