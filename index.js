@@ -9,8 +9,8 @@ const app = express();
 app.use(express.static('public'));
 
 const clientId      = process.env.CLIENT_ID;
-const redirectUri   = process.env.REDIRECT_URI;      // ex. https://spotifyjunior-backend.onrender.com/callback
-const appRedirect   = process.env.APP_REDIRECT_URI;   // ex. spotifyjunior://callback
+const redirectUri   = process.env.REDIRECT_URI;        // ex. https://spotifyjunior-backend.onrender.com/callback
+const appRedirect   = process.env.APP_REDIRECT_URI || "spotifyjunior://callback";
 const PORT          = process.env.PORT || 3000;
 
 // Stockage temporaire des codeVerifiers, indexés par state
@@ -30,7 +30,7 @@ function generateCodeChallenge(verifier) {
 }
 
 /**
- * 1) /login
+ * 1) GET /login
  *    Génère code_verifier, code_challenge et state,
  *    stocke le verifier, puis redirige vers Spotify.
  */
@@ -64,9 +64,9 @@ app.get('/login', (req, res) => {
 });
 
 /**
- * 2) /callback
- *    Récupère code & state, valide state, échange code contre tokens,
- *    puis redirige vers l’app mobile via le schéma custom.
+ * 2) GET /callback
+ *    Spotify renvoie ?code=…&state=…
+ *    On échange le code contre les tokens, puis on force un 302 vers l’app mobile.
  */
 app.get('/callback', async (req, res) => {
   const { code, state } = req.query;
@@ -78,6 +78,7 @@ app.get('/callback', async (req, res) => {
   verifierStore.delete(state);
 
   try {
+    // Échange code → tokens
     const tokenResp = await axios.post(
       'https://accounts.spotify.com/api/token',
       qs.stringify({
@@ -92,31 +93,23 @@ app.get('/callback', async (req, res) => {
 
     const { access_token, refresh_token, expires_in } = tokenResp.data;
 
+    // URI de redirection vers l'app mobile
     const redirectToApp = `${appRedirect}`
       + `?access_token=${access_token}`
       + `&refresh_token=${refresh_token}`
       + `&expires_in=${expires_in}`;
 
-    res.send(`
-      <html>
-        <head><meta charset="UTF-8"><title>Connexion réussie</title></head>
-        <body style="font-family:sans-serif; text-align:center; margin-top:100px">
-          <h1>✅ Connexion Spotify réussie</h1>
-          <p>Si vous n’êtes pas redirigé automatiquement, cliquez :</p>
-          <a href="${redirectToApp}">Retourner dans l’application</a>
-          <script>window.location.href = "${redirectToApp}";</script>
-        </body>
-      </html>
-    `);
+    // **302 Redirect** vers le schéma custom
+    return res.redirect(302, redirectToApp);
 
   } catch (err) {
     console.error('Token exchange error:', err.response?.data || err.message);
-    res.status(500).send('Erreur lors de l’échange du code');
+    return res.status(500).send('Erreur lors de l’échange du code');
   }
 });
 
 /**
- * 3) /me
+ * 3) GET /me
  *    Proxy vers Spotify API /v1/me en utilisant le header Authorization fourni
  *    par l’app mobile dans chaque requête Retrofit.
  */
