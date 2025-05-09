@@ -8,12 +8,12 @@ const crypto  = require('crypto');
 const app = express();
 app.use(express.static('public'));
 
-const clientId    = process.env.CLIENT_ID;
-const redirectUri = process.env.REDIRECT_URI;      // ex. https://spotifyjunior-backend.onrender.com/callback
-const appRedirect = process.env.APP_REDIRECT_URI;   // ex. spotifyjunior://callback
-const PORT        = process.env.PORT || 3000;
+const clientId      = process.env.CLIENT_ID;
+const redirectUri   = process.env.REDIRECT_URI;      // ex. https://spotifyjunior-backend.onrender.com/callback
+const appRedirect   = process.env.APP_REDIRECT_URI;   // ex. spotifyjunior://callback
+const PORT          = process.env.PORT || 3000;
 
-// Store PKCE verifiers by state
+// Stockage temporaire des codeVerifiers, indexés par state
 const verifierStore = new Map();
 
 function generateRandomString(length) {
@@ -30,7 +30,9 @@ function generateCodeChallenge(verifier) {
 }
 
 /**
- * 1) /login : génère verifier, challenge & state, stocke verifier, redirige vers Spotify
+ * 1) /login
+ *    Génère code_verifier, code_challenge et state,
+ *    stocke le verifier, puis redirige vers Spotify.
  */
 app.get('/login', (req, res) => {
   const scope = [
@@ -45,18 +47,16 @@ app.get('/login', (req, res) => {
   const codeChallenge = generateCodeChallenge(codeVerifier);
   const state         = generateRandomString(16);
 
-  // Stocke le verifier pour ce state
   verifierStore.set(state, codeVerifier);
 
-  // Construis la query Spotify avec les bons noms de paramètres
   const params = {
-    response_type:        'code',
-    client_id:            clientId,
+    response_type:         'code',
+    client_id:             clientId,
     scope,
-    redirect_uri:         redirectUri,
+    redirect_uri:          redirectUri,
     state,
-    code_challenge_method:'S256',
-    code_challenge:       codeChallenge  // <— utilise bien codeChallenge ici
+    code_challenge_method: 'S256',
+    code_challenge:        codeChallenge
   };
 
   const authUrl = 'https://accounts.spotify.com/authorize?' + qs.stringify(params);
@@ -64,8 +64,9 @@ app.get('/login', (req, res) => {
 });
 
 /**
- * 2) /callback : récupère code & state, valide state, échange code contre tokens,
- *    puis redirige vers l'app mobile via le schéma custom.
+ * 2) /callback
+ *    Récupère code & state, valide state, échange code contre tokens,
+ *    puis redirige vers l’app mobile via le schéma custom.
  */
 app.get('/callback', async (req, res) => {
   const { code, state } = req.query;
@@ -74,10 +75,9 @@ app.get('/callback', async (req, res) => {
   }
 
   const codeVerifier = verifierStore.get(state);
-  verifierStore.delete(state); // plus besoin après usage
+  verifierStore.delete(state);
 
   try {
-    // Échange code → tokens
     const tokenResp = await axios.post(
       'https://accounts.spotify.com/api/token',
       qs.stringify({
@@ -92,13 +92,11 @@ app.get('/callback', async (req, res) => {
 
     const { access_token, refresh_token, expires_in } = tokenResp.data;
 
-    // URL de redirection vers l'app mobile
     const redirectToApp = `${appRedirect}`
       + `?access_token=${access_token}`
       + `&refresh_token=${refresh_token}`
       + `&expires_in=${expires_in}`;
 
-    // Page web + redirection automatique
     res.send(`
       <html>
         <head><meta charset="UTF-8"><title>Connexion réussie</title></head>
@@ -116,6 +114,34 @@ app.get('/callback', async (req, res) => {
     res.status(500).send('Erreur lors de l’échange du code');
   }
 });
+
+/**
+ * 3) /me
+ *    Proxy vers Spotify API /v1/me en utilisant le header Authorization fourni
+ *    par l’app mobile dans chaque requête Retrofit.
+ */
+app.get('/me', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Missing Authorization header' });
+  }
+
+  try {
+    const spotifyRes = await axios.get(
+      'https://api.spotify.com/v1/me',
+      { headers: { Authorization: authHeader } }
+    );
+    res.json(spotifyRes.data);
+  } catch (err) {
+    console.error('Error /me:', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({ error: 'Failed to fetch profile from Spotify' });
+  }
+});
+
+/**
+ * 4) Autres endpoints (top-artists, playlists, recommendations…)
+ *    Implémente-les de façon similaire, en lisant req.headers.authorization.
+ */
 
 app.listen(PORT, () => {
   console.log(`✅ Backend Spotify Junior démarré sur le port ${PORT}`);
