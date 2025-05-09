@@ -1,22 +1,43 @@
 // index.js
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
+const qs = require('querystring');
 require('dotenv').config();
 const crypto = require('crypto');
 
 const app = express();
-app.use(cors());
+app.use(express.static('public'));
 
-const clientId = process.env.CLIENT_ID;
-const clientSecret = process.env.CLIENT_SECRET;
-const redirectUri = process.env.REDIRECT_URI; // https://spotifyjunior-backend.onrender.com/callback
-const appRedirect = "spotifyjunior://callback"; // URI de ton app mobile
+const clientId    = process.env.CLIENT_ID;
+const redirectUri = process.env.REDIRECT_URI;      // ex. https://spotifyjunior-backend.onrender.com/callback
+const appRedirect = process.env.APP_REDIRECT_URI;   // ex. spotifyjunior://callback
 
 const PORT = process.env.PORT || 3000;
 
-let currentCodeVerifier = null;
+// Stockage temporaire des codeVerifiers, indexés par state
+const verifierStore = new Map();
 
+function generateRandomString(length) {
+  return crypto.randomBytes(length)
+    .toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function generateCodeChallenge(verifier) {
+  return crypto.createHash('sha256')
+    .update(verifier)
+    .digest('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * 1) /login → on génère :
+ *    • code_verifier (secret PKCE)
+ *    • code_challenge
+ *    • state (pour sécuriser l’échange)
+ *  On stocke verifierStore[state] = code_verifier,
+ *  puis on redirige vers Spotify.
+ */
 app.get('/login', (req, res) => {
   const scope = [
     'user-read-private',
@@ -31,97 +52,87 @@ app.get('/login', (req, res) => {
     'user-modify-playback-state'
   ].join(' ');
 
-  currentCodeVerifier = generateRandomString(64);
-  const codeChallenge = generateCodeChallenge(currentCodeVerifier);
+  const codeVerifier  = generateRandomString(64);
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  const state         = generateRandomString(16);
 
-  const redirectUrl = 'https://accounts.spotify.com/authorize?' +
-    new URLSearchParams({
-      response_type: 'code',
-      client_id: clientId,
-      scope: scope,
-      redirect_uri: redirectUri,
-      code_challenge_method: 'S256',
-      code_challenge: codeChallenge
-    });
+  verifierStore.set(state, codeVerifier);
 
-  res.redirect(redirectUrl.toString());
+  const params = {
+    response_type:      'code',
+    client_id:          clientId,
+    scope,
+    redirect_uri:       redirectUri,
+    state,
+    code_challenge_method: 'S256',
+    code_challenge
+  };
+
+  const authUrl = 'https://accounts.spotify.com/authorize?' + qs.stringify(params);
+  res.redirect(authUrl);
 });
 
+/**
+ * 2) /callback → Spotify nous renvoie ?code=…&state=…
+ *    On vérifie le state, on récupère le code_verifier,
+ *    on échange le code contre un token, puis on redirige
+ *    vers l’app mobile via le schéma custom.
+ */
 app.get('/callback', async (req, res) => {
-  const code = req.query.code || null;
-
-  if (!code) {
-    return res.status(400).send('Missing code');
+  const { code, state } = req.query;
+  if (!code || !state || !verifierStore.has(state)) {
+    return res.status(400).send('Invalid state or missing code');
   }
+
+  const codeVerifier = verifierStore.get(state);
+  // On peut maintenant supprimer l’entrée pour éviter la réutilisation
+  verifierStore.delete(state);
 
   try {
-    const response = await axios.post(
+    // Échange code → tokens
+    const tokenResp = await axios.post(
       'https://accounts.spotify.com/api/token',
-      new URLSearchParams({
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: redirectUri,
-        client_id: clientId,
-        code_verifier: currentCodeVerifier
+      qs.stringify({
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  redirectUri,
+        client_id:     clientId,
+        code_verifier: codeVerifier
       }),
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      }
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
 
-    const accessTokenApi = response.data.access_token;
+    const { access_token, refresh_token, expires_in } = tokenResp.data;
 
-    // Envoi page de redirection
+    // On redirige immédiatement vers l'app mobile
+    const redirectToApp = `${appRedirect}`
+      + `?access_token=${access_token}`
+      + `&refresh_token=${refresh_token}`
+      + `&expires_in=${expires_in}`;
+
+    // Page web de secours + redirection automatique
     res.send(`
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>Connexion Spotify réussie</title>
-    <style>
-      body { font-family: sans-serif; text-align: center; margin-top: 100px; }
-      a.button {
-        background-color: #1DB954;
-        color: white;
-        padding: 15px 25px;
-        text-decoration: none;
-        font-size: 18px;
-        border-radius: 5px;
-        display: inline-block;
-        margin-top: 30px;
-      }
-    </style>
-    <script>
-      window.onload = function() {
-        window.location.href = "${appRedirect}#access_token_api=${accessTokenApi}";
-      };
-    </script>
-  </head>
-  <body>
-    <h1>✅ Connexion réussie à Spotify !</h1>
-    <p>Si vous n'êtes pas redirigé automatiquement, cliquez :</p>
-    <a class="button" href="${appRedirect}#access_token_api=${accessTokenApi}">Retourner dans l'application</a>
-  </body>
-</html>
+      <html><head><meta charset="UTF-8"><title>Redirection...</title></head>
+      <body style="font-family:sans-serif; text-align:center; margin-top:100px">
+        <h1>Connexion réussie ✅</h1>
+        <p>Si vous n'êtes pas redirigé automatiquement, cliquez :</p>
+        <a href="${redirectToApp}">Retourner dans l'application</a>
+        <script>window.location.href = "${redirectToApp}";</script>
+      </body></html>
     `);
 
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-    res.status(500).send('Erreur lors de l\'échange du code');
+  } catch (err) {
+    console.error('Token exchange error:', err.response?.data || err.message);
+    res.status(500).send('Erreur lors de l’échange du code');
   }
 });
 
+/**
+ * 3) Ici tu ajoutes tes autres endpoints (/me, /top-artists, etc.)
+ *    en t’assurant de passer le header "Authorization: Bearer <access_token>"
+ *    que ton appli mobile t’enverra à chaque requête.
+ */
+
 app.listen(PORT, () => {
-  console.log(`✅ Serveur Spotify Junior démarré sur port ${PORT}`);
+  console.log(`✅ Spotify Junior backend démarré sur le port ${PORT}`);
 });
-
-function generateRandomString(length) {
-  return crypto.randomBytes(length).toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function generateCodeChallenge(codeVerifier) {
-  return crypto.createHash('sha256')
-    .update(codeVerifier)
-    .digest('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
