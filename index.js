@@ -1,141 +1,117 @@
-// index.js
 const express = require('express');
-const axios   = require('axios');
-const qs      = require('querystring');
+const fetch = require('node-fetch');
+const cors = require('cors');
+const { MongoClient } = require('mongodb');
 require('dotenv').config();
-const crypto  = require('crypto');
 
 const app = express();
-app.use(express.static('public'));
+const PORT = process.env.PORT || 3000;
+app.use(cors());
 
-const clientId    = process.env.CLIENT_ID;
-const redirectUri = process.env.REDIRECT_URI;      // ex. https://spotifyjunior-backend.onrender.com/callback
-const appRedirect = process.env.APP_REDIRECT_URI || "spotifyjunior://callback";
-const PORT       = process.env.PORT || 3000;
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const REDIRECT_URI = process.env.REDIRECT_URI; // e.g. https://spotifyjunior-backend.onrender.com/callback
+const MONGO_URI = process.env.MONGO_URI; // MongoDB Atlas URI
 
-/** 
- * Génère un code_verifier PKCE aléatoire (c'est aussi notre state). 
- * On n’a plus besoin de stocker quoi que ce soit en mémoire.
- */
-function generateCodeVerifier() {
-  return crypto.randomBytes(64)
-    .toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
+// Connexion MongoDB
+let db;
+MongoClient.connect(MONGO_URI, { useUnifiedTopology: true })
+  .then(client => {
+    db = client.db('spotifyjunior');
+    console.log('✅ Connexion MongoDB réussie');
+  })
+  .catch(err => console.error('❌ Erreur MongoDB:', err));
 
-/**
- * À partir du code_verifier, génère le code_challenge (S256 + base64url).
- */
-function generateCodeChallenge(verifier) {
-  return crypto.createHash('sha256')
-    .update(verifier)
-    .digest('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-/**
- * 1) GET /login
- *    - Génère code_verifier (et state)
- *    - Génère code_challenge
- *    - Redirige vers Spotify avec state=code_verifier
- */
-app.get('/login', (req, res) => {
-  const scope = [
-    'user-read-private','user-read-email',
-    'playlist-read-private','user-library-read',
-    'user-top-read','user-read-recently-played',
-    'app-remote-control','streaming',
-    'user-read-playback-state','user-modify-playback-state'
-  ].join(' ');
-
-  const codeVerifier  = generateCodeVerifier();            // sera aussi notre state
-  const codeChallenge = generateCodeChallenge(codeVerifier);
-
-  const params = {
-    response_type:         'code',
-    client_id:             clientId,
-    scope,
-    redirect_uri:          redirectUri,
-    state:                 codeVerifier,                  // state = codeVerifier
-    code_challenge_method: 'S256',
-    code_challenge:        codeChallenge
-  };
-
-  const authorizeUrl = 'https://accounts.spotify.com/authorize?' + qs.stringify(params);
-  res.redirect(authorizeUrl);
-});
-
-/**
- * 2) GET /callback
- *    - Spotify renvoie ?code=…&state=…
- *    - state = codeVerifier
- *    - On récupère codeVerifier, on échange code => tokens
- *    - 302 redirect vers spotifyjunior://callback?... 
- */
+// --- Callback Spotify ---
 app.get('/callback', async (req, res) => {
-  const { code, state: codeVerifier } = req.query;
+  const code = req.query.code;
+  const codeVerifier = req.query.code_verifier;
 
   if (!code || !codeVerifier) {
-    return res.status(400).send('Invalid state or missing code');
+    return res.status(400).send('Code ou code_verifier manquant');
   }
 
-  try {
-    const tokenResponse = await axios.post(
-      'https://accounts.spotify.com/api/token',
-      qs.stringify({
-        grant_type:    'authorization_code',
-        code,
-        redirect_uri:  redirectUri,
-        client_id:     clientId,
-        code_verifier: codeVerifier
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
+  const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: CLIENT_ID,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: codeVerifier,
+    }),
+  });
 
-    const { access_token, refresh_token, expires_in } = tokenResponse.data;
+  const tokenData = await tokenResponse.json();
 
-    // On redirige directement l’OS vers l’app mobile
-    const redirectToApp = `${appRedirect}`
-      + `?access_token=${access_token}`
-      + `&refresh_token=${refresh_token}`
-      + `&expires_in=${expires_in}`;
-
-    return res.redirect(302, redirectToApp);
-
-  } catch (err) {
-    console.error('Error exchanging code for token:', err.response?.data || err.message);
-    return res.status(500).send('Erreur lors de l’échange du code');
+  if (tokenData.error) {
+    console.error('Erreur token:', tokenData.error_description);
+    return res.status(400).json(tokenData);
   }
+
+  const accessToken = tokenData.access_token;
+  const refreshToken = tokenData.refresh_token;
+
+  // Obtenir user_id
+  const profileResp = await fetch('https://api.spotify.com/v1/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  const profileData = await profileResp.json();
+  const userId = profileData.id;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'Impossible de récupérer le user_id Spotify' });
+  }
+
+  // Stocker en base
+  await db.collection('tokens').updateOne(
+    { user_id: userId },
+    {
+      $set: {
+        refresh_token: refreshToken,
+        updatedAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+
+  return res.json({ access_token: accessToken, user_id: userId });
 });
 
-/**
- * 3) GET /me
- *    Proxy vers l’API Spotify /v1/me
- *    Lit le header Authorization envoyé par le client mobile.
- */
-app.get('/me', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ error: 'Missing Authorization header' });
+// --- Refresh token ---
+app.get('/refresh_token', async (req, res) => {
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'user_id requis' });
+
+  const user = await db.collection('tokens').findOne({ user_id: userId });
+  if (!user || !user.refresh_token) {
+    return res.status(404).json({ error: 'Refresh token introuvable pour ce user_id' });
   }
 
-  try {
-    const spotifyMe = await axios.get(
-      'https://api.spotify.com/v1/me',
-      { headers: { Authorization: authHeader } }
-    );
-    res.json(spotifyMe.data);
-  } catch (err) {
-    console.error('Error fetching /me:', err.response?.data || err.message);
-    res.status(err.response?.status || 500).json({ error: 'Failed to fetch profile' });
+  const refreshResponse = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      Authorization:
+        'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: user.refresh_token,
+    }),
+  });
+
+  const refreshData = await refreshResponse.json();
+  if (refreshData.error) {
+    console.error('Erreur refresh:', refreshData.error_description);
+    return res.status(400).json(refreshData);
   }
+
+  return res.json({ access_token: refreshData.access_token });
 });
-
-/**
- * 4) (Optionnel) Autres endpoints : top-artists, playlists, recommendations, etc.
- *    Implemente-les en lisant req.headers.authorization exactement de la même façon.
- */
 
 app.listen(PORT, () => {
-  console.log(`✅ SpotifyJunior backend up on port ${PORT}`);
+  console.log(`🚀 Serveur démarré sur http://localhost:${PORT}`);
 });
