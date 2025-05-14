@@ -4,7 +4,7 @@ const cors = require('cors');
 const { MongoClient } = require('mongodb');
 require('dotenv').config();
 
-const app = express(); // 🔴 cette ligne doit être là !
+const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(cors());
 
@@ -22,41 +22,44 @@ MongoClient.connect(MONGO_URI, { useUnifiedTopology: true })
   })
   .catch(err => console.error('❌ Erreur MongoDB:', err));
 
-// --- Callback Spotify ---
+// --- Callback après autorisation Spotify ---
 app.get('/callback', async (req, res) => {
   console.log("➡️ Requête reçue sur /callback");
   console.log("🔎 Query params reçus :", req.query);
 
   const code = req.query.code;
-  const codeVerifier = req.query.code_verifier;
 
-  if (!code || !codeVerifier) {
-    console.error("❌ code ou code_verifier manquant !");
-    return res.status(400).send("Code ou code_verifier manquant");
+  if (!code) {
+    console.error("❌ Code manquant !");
+    return res.status(400).send("Code manquant");
   }
 
+  // Échange du code contre un access_token
   const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      Authorization:
+        'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
     body: new URLSearchParams({
-      client_id: CLIENT_ID,
       grant_type: 'authorization_code',
       code,
       redirect_uri: REDIRECT_URI,
-      code_verifier: codeVerifier,
     }),
   });
 
   const tokenData = await tokenResponse.json();
 
   if (tokenData.error) {
-    console.error('Erreur token:', tokenData.error_description);
+    console.error('❌ Erreur token:', tokenData.error_description);
     return res.status(400).json(tokenData);
   }
 
   const accessToken = tokenData.access_token;
   const refreshToken = tokenData.refresh_token;
 
+  // Récupération du profil utilisateur
   const profileResp = await fetch('https://api.spotify.com/v1/me', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -68,6 +71,7 @@ app.get('/callback', async (req, res) => {
     return res.status(400).json({ error: 'Impossible de récupérer le user_id Spotify' });
   }
 
+  // Sauvegarde du refresh_token en base
   await db.collection('tokens').updateOne(
     { user_id: userId },
     {
@@ -82,7 +86,7 @@ app.get('/callback', async (req, res) => {
   return res.json({ access_token: accessToken, user_id: userId });
 });
 
-// --- Refresh token ---
+// --- Route de refresh du token depuis l’app ---
 app.get('/refresh_token', async (req, res) => {
   const userId = req.query.user_id;
   if (!userId) return res.status(400).json({ error: 'user_id requis' });
@@ -107,7 +111,7 @@ app.get('/refresh_token', async (req, res) => {
 
   const refreshData = await refreshResponse.json();
   if (refreshData.error) {
-    console.error('Erreur refresh:', refreshData.error_description);
+    console.error('❌ Erreur refresh:', refreshData.error_description);
     return res.status(400).json(refreshData);
   }
 
